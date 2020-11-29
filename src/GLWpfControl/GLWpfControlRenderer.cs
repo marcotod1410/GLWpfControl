@@ -29,13 +29,16 @@ namespace OpenTK.Wpf
         
         /// The OpenGL Framebuffer height
         public int Height => _framebuffer?.FramebufferWidth ?? 0;
-        
+
+        public D3DImage D3dImage { get; }
+
         private TimeSpan _lastFrameStamp;
 
-
-        public GLWpfControlRenderer(GLWpfControlSettings settings)
+        public GLWpfControlRenderer(GLWpfControlSettings settings, D3DImage image)
         {
             _context = new DxGlContext(settings);
+            D3dImage = image;
+            SetSize(1, 1, 1, 1);
         }
 
 
@@ -43,13 +46,22 @@ namespace OpenTK.Wpf
             if (_framebuffer == null || _framebuffer.Width != width && _framebuffer.Height != height) {
                 _framebuffer?.Dispose();
                 _framebuffer = null;
+                var backbuffer = IntPtr.Zero;
                 if (width > 0 && height > 0) {
                     _framebuffer = new DxGLFramebuffer(_context, width, height, dpiScaleX, dpiScaleY);
+                    backbuffer = _framebuffer.DxRenderTargetHandle;
+                    D3dImage.Lock();
+                    D3dImage.SetBackBuffer(D3DResourceType.IDirect3DSurface9, _framebuffer.DxRenderTargetHandle);
+                    D3dImage.Unlock();
                 }
+        
+                D3dImage.Lock();
+                D3dImage.SetBackBuffer(D3DResourceType.IDirect3DSurface9, backbuffer);  // if backbuffer is zero, it will do a proper cleanup of the rendertarget, since D3DImage still retains a reference to it
+                D3dImage.Unlock();
             }
         }
 
-        public void Render(DrawingContext drawingContext) {
+        public void Render() {
             if (_framebuffer == null) {
                 return;
             }
@@ -63,22 +75,12 @@ namespace OpenTK.Wpf
             GLAsyncRender?.Invoke();
             PostRender();
             
-            // Transforms are applied in reverse order
-            drawingContext.PushTransform(_framebuffer.TranslateTransform);              // Apply translation to the image on the Y axis by the height. This assures that in the next step, where we apply a negative scale the image is still inside of the window
-            drawingContext.PushTransform(_framebuffer.FlipYTransform);                  // Apply a scale where the Y axis is -1. This will rotate the image by 180 deg
-
-            // dpi scaled rectangle from the image
-            var rect = new Rect(0, 0, _framebuffer.D3dImage.Width, _framebuffer.D3dImage.Height);
-            drawingContext.DrawImage(_framebuffer.D3dImage, rect);            // Draw the image source 
-
-            drawingContext.Pop();                                                       // Remove the scale transform
-            drawingContext.Pop();                                                       // Remove the translation transform
         }
 
         /// Sets up the framebuffer, directx stuff for rendering. 
         private void PreRender()
         {
-            _framebuffer.D3dImage.Lock();
+            D3dImage.Lock();
             Wgl.DXLockObjectsNV(_context.GlDeviceHandle, 1, new [] {_framebuffer.DxInteropRegisteredHandle});
             GL.BindFramebuffer(FramebufferTarget.Framebuffer, _framebuffer.GLFramebufferHandle);
             GL.Viewport(0, 0, _framebuffer.FramebufferWidth, _framebuffer.FramebufferHeight);
@@ -88,9 +90,9 @@ namespace OpenTK.Wpf
         private void PostRender()
         {
             Wgl.DXUnlockObjectsNV(_context.GlDeviceHandle, 1, new [] {_framebuffer.DxInteropRegisteredHandle});
-            _framebuffer.D3dImage.SetBackBuffer(D3DResourceType.IDirect3DSurface9, _framebuffer.DxRenderTargetHandle);
-            _framebuffer.D3dImage.AddDirtyRect(new Int32Rect(0, 0, _framebuffer.FramebufferWidth, _framebuffer.FramebufferHeight));
-            _framebuffer.D3dImage.Unlock();
+            D3dImage.SetBackBuffer(D3DResourceType.IDirect3DSurface9, _framebuffer.DxRenderTargetHandle);
+            D3dImage.AddDirtyRect(new Int32Rect(0, 0, _framebuffer.FramebufferWidth, _framebuffer.FramebufferHeight));
+            D3dImage.Unlock();
         }
     }
 }

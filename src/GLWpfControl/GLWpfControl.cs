@@ -2,6 +2,8 @@
 using System.ComponentModel;
 using System.Diagnostics;
 using System.Windows;
+using System.Windows.Controls;
+using System.Windows.Interop;
 using System.Windows.Media;
 using JetBrains.Annotations;
 
@@ -12,7 +14,7 @@ namespace OpenTK.Wpf
     ///     To use this component, call the <see cref="Start(GLWpfControlSettings)"/> method.
     ///     Bind to the <see cref="Render"/> event only after <see cref="Start(GLWpfControlSettings)"/> is called.
     /// </summary>
-    public sealed class GLWpfControl : FrameworkElement
+    public sealed class GLWpfControl : Image
     {
         // -----------------------------------
         // EVENTS
@@ -68,6 +70,10 @@ namespace OpenTK.Wpf
         /// To be used for operations related to OpenGL viewport calls (glViewport, glScissor, ...).
         public int FrameBufferHeight => _renderer?.Height ?? 0;
 
+        private readonly D3DImage _source = new D3DImage();
+
+        private ScaleTransform _flipTransform = new ScaleTransform(1, -1);
+
         /// <summary>
         /// Used to create a new control. Before rendering can take place, <see cref="Start(GLWpfControlSettings)"/> must be called.
         /// </summary>
@@ -82,7 +88,7 @@ namespace OpenTK.Wpf
             }
             _settings = settings.Copy();
             _needsRedraw = settings.RenderContinuously;
-            _renderer = new GLWpfControlRenderer(_settings);
+            _renderer = new GLWpfControlRenderer(_settings, _source);
             _renderer.GLRender += timeDelta => Render?.Invoke(timeDelta);
             _renderer.GLAsyncRender += () => AsyncRender?.Invoke();
             IsVisibleChanged += (_, args) => {
@@ -96,10 +102,19 @@ namespace OpenTK.Wpf
 
             Loaded += (a, b) => {
                 SetupRenderSize();
-                InvalidateVisual();
+                Invalidate();
             };
             Unloaded += (a, b) => OnUnloaded();
+
+            Source = _source;
+            Stretch = Stretch.Fill;
+
             Ready?.Invoke();
+        }
+
+        public void Invalidate()
+        {
+            _needsRedraw = true;
         }
         
         private void SetupRenderSize() {
@@ -122,6 +137,7 @@ namespace OpenTK.Wpf
                 }
             }
             _renderer?.SetSize((int) RenderSize.Width, (int) RenderSize.Height, dpiScaleX, dpiScaleY);
+            _flipTransform = new ScaleTransform(1, -1, 0, RenderSize.Height / 2);
         }
 
         private void OnUnloaded()
@@ -132,7 +148,7 @@ namespace OpenTK.Wpf
         private void OnCompTargetRender(object sender, EventArgs e)
         {
             if (_needsRedraw) {
-                InvalidateVisual();
+                _renderer?.Render();
                 _needsRedraw = RenderContinuously;
             }
         }
@@ -143,9 +159,10 @@ namespace OpenTK.Wpf
                 DesignTimeHelper.DrawDesignTimeHelper(this, drawingContext);
             }
             else {
-                _renderer?.Render(drawingContext);
+                drawingContext.PushTransform(_flipTransform);
+                base.OnRender(drawingContext);
+                drawingContext.Pop();
             }
-            base.OnRender(drawingContext);
         }
         
         protected override void OnRenderSizeChanged(SizeChangedInfo info)
@@ -158,7 +175,7 @@ namespace OpenTK.Wpf
             if ((info.WidthChanged || info.HeightChanged) && (info.NewSize.Width > 0 && info.NewSize.Height > 0))
             {
                 SetupRenderSize();
-                InvalidateVisual();
+                Invalidate();
             }
             base.OnRenderSizeChanged(info);
         }
